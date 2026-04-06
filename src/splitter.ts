@@ -1,6 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+export type LLMProvider = 'anthropic' | 'groq';
+
 export interface SplitSuggestionInput {
+  provider: LLMProvider;
   fileNames: string[];
   totalLines: number;
   prTitle: string;
@@ -112,7 +115,7 @@ export function fallbackSplitSuggestion(fileNames: string[]): string {
   return bullets.join('\n');
 }
 
-export async function getSplitSuggestion(input: SplitSuggestionInput): Promise<string> {
+async function getAnthropicSplitSuggestion(input: SplitSuggestionInput): Promise<string> {
   const client = new Anthropic({ apiKey: input.apiKey });
 
   const message = await client.messages.create({
@@ -137,4 +140,68 @@ export async function getSplitSuggestion(input: SplitSuggestionInput): Promise<s
   }
 
   return normalizeSuggestionText(text);
+}
+
+type GroqChatResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string;
+    };
+  }>;
+};
+
+async function getGroqSplitSuggestion(input: SplitSuggestionInput): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25_000);
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: input.model,
+        temperature: 0.2,
+        max_tokens: 700,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a senior engineer giving practical PR splitting advice.',
+          },
+          {
+            role: 'user',
+            content: buildSplitPrompt(input.fileNames, input.totalLines, input.prTitle, input.prBody),
+          },
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      const compactError = errorBody.replace(/\s+/g, ' ').trim().slice(0, 500);
+      throw new Error(`Groq API failed with status ${response.status}: ${compactError}`);
+    }
+
+    const data = (await response.json()) as GroqChatResponse;
+    const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+
+    if (!text) {
+      throw new Error('Groq response did not include text content.');
+    }
+
+    return normalizeSuggestionText(text);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function getSplitSuggestion(input: SplitSuggestionInput): Promise<string> {
+  if (input.provider === 'anthropic') {
+    return getAnthropicSplitSuggestion(input);
+  }
+
+  return getGroqSplitSuggestion(input);
 }

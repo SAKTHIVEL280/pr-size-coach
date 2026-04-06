@@ -2,7 +2,7 @@
 
 pr-size-coach is a TypeScript GitHub Action that keeps pull requests reviewable by detecting oversized PRs and posting practical split recommendations.
 
-When configured with an Anthropic API key, it generates AI-guided split plans based on PR title, description, and changed files. Without AI, it still provides deterministic directory-based split guidance.
+When configured with an LLM API key (Anthropic or Groq), it generates AI-guided split plans based on PR title, description, and changed files. Without AI, it still provides deterministic directory-based split guidance.
 
 ## Why this exists
 
@@ -24,8 +24,11 @@ Large PRs reduce review quality. This action helps teams enforce a healthy revie
 | `github-token` | Yes | `${{ github.token }}` | Token for reading PR files and writing comments. |
 | `max-lines` | No | `400` | Max additions + deletions before PR is flagged. |
 | `max-files` | No | `20` | Max files changed before PR is flagged. |
-| `anthropic-api-key` | No | `""` | Enables AI split suggestions when provided. |
+| `llm-provider` | No | `auto` | AI provider selection: `auto`, `anthropic`, or `groq`. |
+| `anthropic-api-key` | No | `""` | Anthropic API key for AI split suggestions. |
+| `groq-api-key` | No | `""` | Groq API key for AI split suggestions. |
 | `anthropic-model` | No | `claude-3-5-haiku-latest` | Anthropic model used for suggestions. |
+| `groq-model` | No | `llama-3.3-70b-versatile` | Groq model used for suggestions. |
 | `fail-on-large` | No | `false` | If true, marks check as failed for oversized PRs. |
 | `ignore-patterns` | No | `*.lock,*.snap,dist/**,build/**,*.min.js,*lock*.json` | Comma-separated glob patterns to exclude from metrics. |
 
@@ -73,13 +76,16 @@ jobs:
       - uses: sakthivel280/pr-size-coach@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          anthropic-model: claude-3-5-haiku-latest
+          llm-provider: groq
+          groq-api-key: ${{ secrets.GROQ_API_KEY }}
+          groq-model: llama-3.3-70b-versatile
           max-lines: '400'
           max-files: '20'
           fail-on-large: 'false'
           ignore-patterns: '*.lock,*.snap,dist/**,*.generated.ts'
 ```
+
+For Anthropic, set `llm-provider: anthropic` and use `anthropic-api-key` / `anthropic-model`.
 
 ## Local development
 

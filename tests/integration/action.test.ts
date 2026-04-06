@@ -37,8 +37,11 @@ describe('action run', () => {
       'max-files': '20',
       'fail-on-large': 'true',
       'ignore-patterns': 'dist/**',
+      'llm-provider': 'auto',
       'anthropic-api-key': '',
       'anthropic-model': 'claude-3-5-haiku-latest',
+      'groq-api-key': '',
+      'groq-model': 'llama-3.3-70b-versatile',
     };
 
     coreMock.getInput.mockImplementation((name: string) => inputs[name] ?? '');

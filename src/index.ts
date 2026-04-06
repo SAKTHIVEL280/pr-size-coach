@@ -7,12 +7,26 @@ import {
   parseIgnorePatterns,
 } from './analyzer';
 import { postComment } from './commenter';
-import { fallbackSplitSuggestion, getSplitSuggestion } from './splitter';
+import {
+  type LLMProvider,
+  fallbackSplitSuggestion,
+  getSplitSuggestion,
+} from './splitter';
 
 const DEFAULT_MAX_LINES = 400;
 const DEFAULT_MAX_FILES = 20;
 const DEFAULT_IGNORE_PATTERNS = '*.lock,*.snap,dist/**,build/**,*.min.js,*lock*.json';
+const DEFAULT_LLM_PROVIDER = 'auto';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-3-5-haiku-latest';
+const DEFAULT_GROQ_MODEL = 'llama-3.3-70b-versatile';
+
+type LLMProviderInput = LLMProvider | 'auto';
+
+interface LLMConfig {
+  provider: LLMProvider;
+  apiKey: string;
+  model: string;
+}
 
 function parseIntegerInput(name: string, fallback: number): number {
   const raw = core.getInput(name)?.trim();
@@ -45,6 +59,87 @@ function parseBooleanInput(name: string, fallback: boolean): boolean {
   throw new Error(`Input '${name}' must be true/false. Received '${raw}'.`);
 }
 
+function parseProviderInput(raw: string): LLMProviderInput {
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) {
+    return 'auto';
+  }
+
+  if (normalized === 'auto' || normalized === 'anthropic' || normalized === 'groq') {
+    return normalized;
+  }
+
+  throw new Error(`Input 'llm-provider' must be one of: auto, anthropic, groq. Received '${raw}'.`);
+}
+
+function resolveLLMConfig(
+  provider: LLMProviderInput,
+  anthropicApiKey: string,
+  groqApiKey: string,
+  anthropicModel: string,
+  groqModel: string
+): { config: LLMConfig | null; warning?: string } {
+  if (provider === 'auto') {
+    if (anthropicApiKey) {
+      return {
+        config: {
+          provider: 'anthropic',
+          apiKey: anthropicApiKey,
+          model: anthropicModel,
+        },
+      };
+    }
+
+    if (groqApiKey) {
+      return {
+        config: {
+          provider: 'groq',
+          apiKey: groqApiKey,
+          model: groqModel,
+        },
+      };
+    }
+
+    return {
+      config: null,
+      warning:
+        'No AI provider key found. Set ANTHROPIC_API_KEY or GROQ_API_KEY (or corresponding action inputs) to enable AI suggestions.',
+    };
+  }
+
+  if (provider === 'anthropic') {
+    if (!anthropicApiKey) {
+      return {
+        config: null,
+        warning: 'llm-provider is anthropic, but anthropic-api-key is missing.',
+      };
+    }
+
+    return {
+      config: {
+        provider: 'anthropic',
+        apiKey: anthropicApiKey,
+        model: anthropicModel,
+      },
+    };
+  }
+
+  if (!groqApiKey) {
+    return {
+      config: null,
+      warning: 'llm-provider is groq, but groq-api-key is missing.',
+    };
+  }
+
+  return {
+    config: {
+      provider: 'groq',
+      apiKey: groqApiKey,
+      model: groqModel,
+    },
+  };
+}
+
 function appendDescriptionGuidance(suggestion: string): string {
   const guidance =
     '- Add a concise PR description with scope, motivation, and test notes so reviewers can validate each split PR quickly.';
@@ -58,8 +153,11 @@ export async function run(): Promise<void> {
     const maxLines = parseIntegerInput('max-lines', DEFAULT_MAX_LINES);
     const maxFiles = parseIntegerInput('max-files', DEFAULT_MAX_FILES);
     const failOnLarge = parseBooleanInput('fail-on-large', false);
+    const providerInput = parseProviderInput(core.getInput('llm-provider') || DEFAULT_LLM_PROVIDER);
     const anthropicApiKey = core.getInput('anthropic-api-key') || process.env.ANTHROPIC_API_KEY || '';
+    const groqApiKey = core.getInput('groq-api-key') || process.env.GROQ_API_KEY || '';
     const anthropicModel = core.getInput('anthropic-model') || DEFAULT_ANTHROPIC_MODEL;
+    const groqModel = core.getInput('groq-model') || DEFAULT_GROQ_MODEL;
     const ignorePatterns = parseIgnorePatterns(core.getInput('ignore-patterns') || DEFAULT_IGNORE_PATTERNS);
 
     const context = github.context;
@@ -97,16 +195,31 @@ export async function run(): Promise<void> {
     let suggestion = '';
 
     if (isLarge) {
-      if (anthropicApiKey) {
-        core.info(`PR is oversized. Requesting AI split suggestions with model ${anthropicModel}.`);
+      const resolution = resolveLLMConfig(
+        providerInput,
+        anthropicApiKey,
+        groqApiKey,
+        anthropicModel,
+        groqModel
+      );
+
+      if (resolution.warning) {
+        core.warning(resolution.warning);
+      }
+
+      if (resolution.config) {
+        core.info(
+          `PR is oversized. Requesting AI split suggestions with provider ${resolution.config.provider} and model ${resolution.config.model}.`
+        );
         try {
           suggestion = await getSplitSuggestion({
+            provider: resolution.config.provider,
             fileNames: stats.fileNames,
             totalLines: stats.totalLines,
             prTitle,
             prBody,
-            apiKey: anthropicApiKey,
-            model: anthropicModel,
+            apiKey: resolution.config.apiKey,
+            model: resolution.config.model,
           });
         } catch (error) {
           core.warning(`AI split suggestion failed: ${(error as Error).message}`);

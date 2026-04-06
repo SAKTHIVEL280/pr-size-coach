@@ -30591,7 +30591,7 @@ function fallbackSplitSuggestion(fileNames) {
   }
   return bullets.join("\n");
 }
-async function getSplitSuggestion(input) {
+async function getAnthropicSplitSuggestion(input) {
   const client = new Anthropic({ apiKey: input.apiKey });
   const message = await client.messages.create({
     model: input.model,
@@ -30609,12 +30609,62 @@ async function getSplitSuggestion(input) {
   }
   return normalizeSuggestionText(text);
 }
+async function getGroqSplitSuggestion(input) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25e3);
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`
+      },
+      body: JSON.stringify({
+        model: input.model,
+        temperature: 0.2,
+        max_tokens: 700,
+        messages: [
+          {
+            role: "system",
+            content: "You are a senior engineer giving practical PR splitting advice."
+          },
+          {
+            role: "user",
+            content: buildSplitPrompt(input.fileNames, input.totalLines, input.prTitle, input.prBody)
+          }
+        ]
+      }),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      const errorBody = await response.text();
+      const compactError = errorBody.replace(/\s+/g, " ").trim().slice(0, 500);
+      throw new Error(`Groq API failed with status ${response.status}: ${compactError}`);
+    }
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+    if (!text) {
+      throw new Error("Groq response did not include text content.");
+    }
+    return normalizeSuggestionText(text);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+async function getSplitSuggestion(input) {
+  if (input.provider === "anthropic") {
+    return getAnthropicSplitSuggestion(input);
+  }
+  return getGroqSplitSuggestion(input);
+}
 
 // src/index.ts
 var DEFAULT_MAX_LINES = 400;
 var DEFAULT_MAX_FILES = 20;
 var DEFAULT_IGNORE_PATTERNS = "*.lock,*.snap,dist/**,build/**,*.min.js,*lock*.json";
+var DEFAULT_LLM_PROVIDER = "auto";
 var DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest";
+var DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 function parseIntegerInput(name, fallback) {
   const raw = getInput(name)?.trim();
   if (!raw) {
@@ -30639,6 +30689,70 @@ function parseBooleanInput(name, fallback) {
   }
   throw new Error(`Input '${name}' must be true/false. Received '${raw}'.`);
 }
+function parseProviderInput(raw) {
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) {
+    return "auto";
+  }
+  if (normalized === "auto" || normalized === "anthropic" || normalized === "groq") {
+    return normalized;
+  }
+  throw new Error(`Input 'llm-provider' must be one of: auto, anthropic, groq. Received '${raw}'.`);
+}
+function resolveLLMConfig(provider, anthropicApiKey, groqApiKey, anthropicModel, groqModel) {
+  if (provider === "auto") {
+    if (anthropicApiKey) {
+      return {
+        config: {
+          provider: "anthropic",
+          apiKey: anthropicApiKey,
+          model: anthropicModel
+        }
+      };
+    }
+    if (groqApiKey) {
+      return {
+        config: {
+          provider: "groq",
+          apiKey: groqApiKey,
+          model: groqModel
+        }
+      };
+    }
+    return {
+      config: null,
+      warning: "No AI provider key found. Set ANTHROPIC_API_KEY or GROQ_API_KEY (or corresponding action inputs) to enable AI suggestions."
+    };
+  }
+  if (provider === "anthropic") {
+    if (!anthropicApiKey) {
+      return {
+        config: null,
+        warning: "llm-provider is anthropic, but anthropic-api-key is missing."
+      };
+    }
+    return {
+      config: {
+        provider: "anthropic",
+        apiKey: anthropicApiKey,
+        model: anthropicModel
+      }
+    };
+  }
+  if (!groqApiKey) {
+    return {
+      config: null,
+      warning: "llm-provider is groq, but groq-api-key is missing."
+    };
+  }
+  return {
+    config: {
+      provider: "groq",
+      apiKey: groqApiKey,
+      model: groqModel
+    }
+  };
+}
 function appendDescriptionGuidance(suggestion) {
   const guidance = "- Add a concise PR description with scope, motivation, and test notes so reviewers can validate each split PR quickly.";
   return suggestion.trim() ? `${suggestion.trim()}
@@ -30650,8 +30764,11 @@ async function run() {
     const maxLines = parseIntegerInput("max-lines", DEFAULT_MAX_LINES);
     const maxFiles = parseIntegerInput("max-files", DEFAULT_MAX_FILES);
     const failOnLarge = parseBooleanInput("fail-on-large", false);
+    const providerInput = parseProviderInput(getInput("llm-provider") || DEFAULT_LLM_PROVIDER);
     const anthropicApiKey = getInput("anthropic-api-key") || process.env.ANTHROPIC_API_KEY || "";
+    const groqApiKey = getInput("groq-api-key") || process.env.GROQ_API_KEY || "";
     const anthropicModel = getInput("anthropic-model") || DEFAULT_ANTHROPIC_MODEL;
+    const groqModel = getInput("groq-model") || DEFAULT_GROQ_MODEL;
     const ignorePatterns = parseIgnorePatterns(getInput("ignore-patterns") || DEFAULT_IGNORE_PATTERNS);
     const context3 = context2;
     if (!context3.payload.pull_request) {
@@ -30680,16 +30797,29 @@ async function run() {
     setOutput("mixed-concerns", String(mixedConcerns));
     let suggestion = "";
     if (isLarge) {
-      if (anthropicApiKey) {
-        info(`PR is oversized. Requesting AI split suggestions with model ${anthropicModel}.`);
+      const resolution = resolveLLMConfig(
+        providerInput,
+        anthropicApiKey,
+        groqApiKey,
+        anthropicModel,
+        groqModel
+      );
+      if (resolution.warning) {
+        warning(resolution.warning);
+      }
+      if (resolution.config) {
+        info(
+          `PR is oversized. Requesting AI split suggestions with provider ${resolution.config.provider} and model ${resolution.config.model}.`
+        );
         try {
           suggestion = await getSplitSuggestion({
+            provider: resolution.config.provider,
             fileNames: stats.fileNames,
             totalLines: stats.totalLines,
             prTitle,
             prBody,
-            apiKey: anthropicApiKey,
-            model: anthropicModel
+            apiKey: resolution.config.apiKey,
+            model: resolution.config.model
           });
         } catch (error2) {
           warning(`AI split suggestion failed: ${error2.message}`);
