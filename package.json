@@ -1,0 +1,52 @@
+{
+  "name": "pr-size-coach",
+  "version": "1.0.0",
+  "description": "GitHub Action that flags oversized PRs and suggests clean split plans with AI.",
+  "main": "dist/index.js",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('lib',{recursive:true,force:true});require('fs').rmSync('dist',{recursive:true,force:true});\"",
+    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --sourcemap",
+    "build": "npm run clean && npm run build:bundle",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "github-action",
+    "pull-request",
+    "code-review",
+    "ai"
+  ],
+  "author": "sakthivel280",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@actions/core": "^3.0.0",
+    "@actions/github": "^9.0.0",
+    "@anthropic-ai/sdk": "^0.82.0",
+    "minimatch": "^10.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sakthivel280/pr-size-coach.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sakthivel280/pr-size-coach/issues"
+  },
+  "homepage": "https://github.com/sakthivel280/pr-size-coach#readme"
+}

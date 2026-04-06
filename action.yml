@@ -1,0 +1,58 @@
+name: 'PR Size Coach'
+description: 'Detects oversized pull requests and suggests clean split plans.'
+author: 'sakthivel280'
+
+inputs:
+  github-token:
+    description: 'GitHub token used to read PR data and write comments.'
+    required: true
+    default: ${{ github.token }}
+
+  max-lines:
+    description: 'Max total lines changed (additions + deletions) before flagging.'
+    required: false
+    default: '400'
+
+  max-files:
+    description: 'Max files changed before flagging.'
+    required: false
+    default: '20'
+
+  anthropic-api-key:
+    description: 'Anthropic API key for AI split suggestions (optional).'
+    required: false
+
+  anthropic-model:
+    description: 'Anthropic model identifier to use for split suggestions.'
+    required: false
+    default: 'claude-3-5-haiku-latest'
+
+  fail-on-large:
+    description: 'If true, marks the check as failed when PR size exceeds limits.'
+    required: false
+    default: 'false'
+
+  ignore-patterns:
+    description: 'Comma-separated glob patterns to ignore (example: *.lock,dist/**).'
+    required: false
+    default: '*.lock,*.snap,dist/**,build/**,*.min.js,*lock*.json'
+
+outputs:
+  is-large:
+    description: 'true when the PR exceeded line or file thresholds.'
+  total-lines:
+    description: 'Total lines changed in PR (after ignore patterns).'
+  files-changed:
+    description: 'Total files changed in PR (after ignore patterns).'
+  missing-description:
+    description: 'true when PR description is empty or placeholder-like.'
+  mixed-concerns:
+    description: 'true when PR appears to span multiple unrelated top-level areas.'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'git-pull-request'
+  color: 'orange'
