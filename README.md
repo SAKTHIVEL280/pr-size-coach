@@ -4,6 +4,14 @@ pr-size-coach is a TypeScript GitHub Action that keeps pull requests reviewable 
 
 When configured with an LLM API key (Anthropic or Groq), it generates AI-guided split plans based on PR title, description, and changed files. Without AI, it still provides deterministic directory-based split guidance.
 
+## Demo
+
+What pr-size-coach posts on an oversized pull request, without an AI key (deterministic split mode):
+
+![pr-size-coach comment on an oversized PR](docs/demo-comment.png)
+
+<sub>Real output from the action's comment builder, run on the file changes of a 20-file Android project.</sub>
+
 ## Why this exists
 
 Large PRs reduce review quality. This action helps teams enforce a healthy review culture with objective thresholds and constructive, actionable feedback.
